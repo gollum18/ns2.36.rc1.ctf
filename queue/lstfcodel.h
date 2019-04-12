@@ -55,6 +55,7 @@ class LSTFCoDelQueue : public Queue {
     Packet* deque();
 
     // Static state (user supplied parameters)
+    double past_influence_; // factor by which previous delays influence dequeuing operation
     double lstf_weight_;    // weight of lstf in queue
     double codel_weight_;   // weight of codel in queue
     double target_;         // target queue size (in time, same units as clock)
@@ -81,11 +82,7 @@ class LSTFCoDelQueue : public Queue {
     TracedDouble d_exp_;    // delay seen by most recently dequeued packet
 
   private:
-    // TODO: Figure out the types for a and b in route and 
-    //  t_min
-    double route_heuristic(nsaddr_t *, nsaddr_t *);
-    double t_min(Packet *, nsaddr_t *, nsaddr_t *);
-    double control_law(double);
+    double control_law(Packet*, double);
     dodequeResult dodeque();
 };
 

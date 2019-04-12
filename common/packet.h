@@ -198,7 +198,7 @@ static const packet_t PT_DCCP_RESET = 71;
 static const packet_t PT_MDART = 72;
 	
         // insert new packet types here
-static packet_t       PT_NTYPE = 74; // This MUST be the LAST one
+static packet_t       PT_NTYPE = 73; // This MUST be the LAST one
 
 enum packetClass
 {
@@ -619,7 +619,7 @@ struct hdr_cmn {
 	int aomdv_salvage_count_;
 	
 	// LSTF Slack Time
-	double slack_
+	double slack_;
 	
         // called if pkt can't obtain media or isn't ack'd. not called if
         // droped by a queue

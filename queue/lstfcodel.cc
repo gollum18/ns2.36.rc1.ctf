@@ -33,6 +33,17 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+ 
+/* CHRISTEN - LSTF requires deterministic routing 
+ * knowledge for each end host to end host route of
+ * the network to do its job properly. It is really only good
+ * for smaller networks such as LANs, where it is not too 
+ * costly to maintain a link-state algorithm.
+ *
+ * This implementation flips LSTF around so that instead of 
+ * decrementing slack at each router, we increment it by the 
+ * amount of time spent in the router.
+ */
 
 #include <math.h>
 #include <sys/types.h>
@@ -53,6 +64,7 @@ static class LSTFCoDelClass : public TclClass {
 
 LSTFCoDelQueue::LSTFCoDelQueue() : tchan_(0)
 {
+    bind("past_influence", &past_influence_);
     bind("lstf_weight", &lstf_weight_);
     bind("codel_weight", &codel_weight_);
     bind("interval_", &interval_);
@@ -66,6 +78,9 @@ LSTFCoDelQueue::LSTFCoDelQueue() : tchan_(0)
 
 void LSTFCoDelQueue::reset()
 {
+    past_influence_ = 0.;
+    lstf_weight_ = 0.;
+    codel_weight_ = 0.;
     curq_ = 0;
     d_exp_ = 0.;
     dropping_ = 0;
@@ -91,27 +106,15 @@ void LSTFCoDelQueue::enque(Packet* pkt)
     } 
 }
 
-// return the amount of time difference needed for 
-// the packet to go from a to b in the network
-double LSTFCoDelQueue::t_min(Packet * p, )
-{
-    // TODO: Determine how to find the pckt source and dest
-    //  it should be included in the pckt itself but IDK
-    //  where the heck it is!!
-}
-
 // return the time of the next drop relative to 't'
 //  modeified to account for the slack time as well
 double LSTFCoDelQueue::control_law(Packet * p, double t)
 {
-    // Christen - Modify Codels control law to account
-    //  for packet slack time
+    // modify codels control law to account for time 
+    //   spent in the intermediary routers -> slack time
     double codel = q.codel_weight_ * 
-        (t + interval_ / sqrt(count_));
-    // slack time is inversely weighted to give 
-    // preference to packets with less slack time
-    double lstf = q.lstf_weight * (1.0/p.slack));
-    return codel + lstf;
+        (t + interval_ / sqrt(count_);
+    return codel + HDR_CMN(p).slack();
 }
 
 // Internal routine to dequeue a packet. All the delay and min tracking
@@ -221,19 +224,14 @@ Packet* LSTFCoDelQueue::deque()
 		if(count_ > 126) count_ = 0.9844 * (count_ + 2);
 	} else
 		count_ = 1;
-        drop_next_ = control_law(now);
+        drop_next_ = control_law(r.p, now);
     }
-    // update the packets slack time
-    // TODO: the middle term should be the amount of time 
-    //  spent waiting in queue, but how to get it??
-    // likewise need a way to track the times for a to b 
-    //  in t_min.
-    double qts = Scheduler::instance().clock() - 
-        HDR_CMN(r.p)->timestamp();
+    
+    // update aggregate slack time
+    // give higher weight to stronger delays experience now
     HDR_CMN(r.p)->slack_ = 
-        HDR_CMN(r.p)->slack() - 
-        qts - 
-        t_min(r.p, HDR_CMN(), HDR_CMN(r.p)->next_hop()) ;
+        (past_influence_ * HDR_CMN(r.p)->slack()) + d_exp_;
+    
     // return the dequeued packet
     return (r.p);
 }
@@ -279,7 +277,8 @@ LSTFCoDelQueue::trace(TracedVar* v)
 {
     const char *p;
 
-    if (((p = strstr(v->name(), "lstf_weight")) == NULL) &&
+    if (((p = strstr(v->name(), "past_influence")) == NULL) &&
+        ((p = strstr(v->name(), "lstf_weight")) == NULL) &&
         ((p = strstr(v->name(), "codel_weight")) == NULL) &&
         ((p = strstr(v->name(), "curq")) == NULL) &&
         ((p = strstr(v->name(), "d_exp")) == NULL) ) {
