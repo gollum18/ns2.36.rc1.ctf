@@ -945,6 +945,8 @@ queue/codel.cc
 queue/codel.h
 queue/codeldt.cc
 queue/codeldt.h
+queue/lstfcodel.cc
+queue/lstfcodel.h
 queue/delayer.cc
 queue/delayer.h
 queue/delaymodel.cc

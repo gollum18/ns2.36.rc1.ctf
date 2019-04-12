@@ -225,6 +225,7 @@ OBJ_CC = \
 	link/dynalink.o routing/rtProtoDV.o common/net-interface.o \
 	link/delaytb.o link/docsislink.o \
 	queue/codeldt.o \
+	queue/lstfcodel.o \
 	mcast/ctrMcast.o mcast/mcast_ctrl.o mcast/srm.o \
 	common/sessionhelper.o queue/delaymodel.o \
 	mcast/srm-ssm.o mcast/srm-topo.o \
