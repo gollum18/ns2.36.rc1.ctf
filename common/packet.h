@@ -27,8 +27,6 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * EDITED 2019 BY: Christen Ford to accomadate Least Lack Time First routing
- *
  * @(#) $Header: /cvsroot/nsnam/ns-2/common/packet.h,v 1.108 2012/05/07 02:30:36 tom_henderson Exp $ (LBL)
  */
 
@@ -618,9 +616,6 @@ struct hdr_cmn {
 	// AOMDV patch
 	int aomdv_salvage_count_;
 	
-	// LSTF Slack Time
-	double slack_;
-	
         // called if pkt can't obtain media or isn't ack'd. not called if
         // droped by a queue
         FailureCallback xmit_failure_; 
@@ -660,9 +655,6 @@ struct hdr_cmn {
 	inline double& timestamp() { return (ts_); }
 	inline int& iface() { return (iface_); }
 	inline dir_t& direction() { return (direction_); }
-	// lstf_begin
-	inline double& slack() { return (slack_); }
-	// lstf_end
 	// monarch_begin
 	inline nsaddr_t& next_hop() { return (next_hop_); }
 	inline int& addr_type() { return (addr_type_); }
