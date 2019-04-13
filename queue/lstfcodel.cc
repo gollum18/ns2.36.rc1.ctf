@@ -1,7 +1,7 @@
 /*
  * Codel - The Controlled-Delay Active Queue Management algorithm
  * Copyright (C) 2011-2012 Kathleen Nichols <nichols@pollere.com>
- * LSTFCoDel - Weighted CoDel with Least Slack Time First
+ * LSTFCodel - CoDel with LSTF functionality.
  * Copyright (C) 2019 Christen Ford <c.t.ford@vikes.csuohio.edu>
  *
  * Redistribution and use in source and binary forms, with or without
@@ -34,15 +34,19 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
  
-/* CHRISTEN - LSTF requires deterministic routing 
- * knowledge for each end host to end host route of
- * the network to do its job properly. It is really only good
- * for smaller networks such as LANs, where it is not too 
- * costly to maintain a link-state algorithm.
+/* Christen - Notes on 'Slack' time.
+ * Slack time is actually defined as the amount of delay a
+ * packet can tolerate from source host to destination host.
+ * It is supposed to be allocated at the packet level, 
+ * however, NS does not easily allow me to do this, and I 
+ * cannot figure out how without getting SEGFAULT's from 
+ * modifying the packet's header. 
  *
- * This implementation flips LSTF around so that instead of 
- * decrementing slack at each router, we increment it by the 
- * amount of time spent in the router.
+ * The easier solution with this was to have the queue 
+ * implement the slack time feature. In this way, the queue
+ * `should` try to minimize slack time, however that is a
+ * work-in-progress.
+ *
  */
 
 #include <math.h>
@@ -54,21 +58,24 @@
 #include "delay.h"
 #include "lstfcodel.h"
 
+#include <iostream>
+
 static class LSTFCoDelClass : public TclClass {
   public:
     LSTFCoDelClass() : TclClass("Queue/LSTFCoDel") {}
     TclObject* create(int, const char*const*) {
         return (new LSTFCoDelQueue);
     }
-} class_lstfcodel;
+} class_codel;
 
 LSTFCoDelQueue::LSTFCoDelQueue() : tchan_(0)
 {
-    bind("past_influence", &past_influence_);
-    bind("lstf_weight", &lstf_weight_);
-    bind("codel_weight", &codel_weight_);
+    bind("forgetfulness_", &forgetfulness_);
+    bind("lstf_weight_", &lstf_weight_);
+    bind("codel_weight_", &codel_weight_);
     bind("interval_", &interval_);
     bind("target_", &target_);  // target min delay in clock ticks
+    bind("slack_", &slack_);    // accumulated slack time
     bind("curq_", &curq_);      // current queue size in bytes
     bind("d_exp_", &d_exp_);    // current delay experienced in clock ticks
     q_ = new PacketQueue();     // underlying queue
@@ -78,9 +85,7 @@ LSTFCoDelQueue::LSTFCoDelQueue() : tchan_(0)
 
 void LSTFCoDelQueue::reset()
 {
-    past_influence_ = 0.;
-    lstf_weight_ = 0.;
-    codel_weight_ = 0.;
+    slack_ = 0.;
     curq_ = 0;
     d_exp_ = 0.;
     dropping_ = 0;
@@ -107,14 +112,12 @@ void LSTFCoDelQueue::enque(Packet* pkt)
 }
 
 // return the time of the next drop relative to 't'
-//  modeified to account for the slack time as well
-double LSTFCoDelQueue::control_law(Packet * p, double t)
+double LSTFCoDelQueue::control_law(double t, double s)
 {
-    // modify codels control law to account for time 
-    //   spent in the intermediary routers -> slack time
-    double codel = q.codel_weight_ * 
-        (t + interval_ / sqrt(count_);
-    return codel + HDR_CMN(p).slack();
+    double codel = codel_weight_ * (t + interval_ / sqrt(count_));
+    // lstf is defined as the lstf_weight * the average slack time, note: I'm not sure if the cast is necessary here, I'm from C#/Java land
+    double lstf = lstf_weight_ * (s / (double)packets_seen_);
+    return codel + 1/lstf;
 }
 
 // Internal routine to dequeue a packet. All the delay and min tracking
@@ -149,7 +152,7 @@ dodequeResult LSTFCoDelQueue::dodeque()
 		// if still above at first_above_time, say it’s ok to drop
 	    // next 3 lines added by kmn (might better adjust count_ first?)
 	    if( (now - drop_next_) < 8*interval_ && count_ > 1) {
-	     first_above_time_ = control_law(now);
+	     first_above_time_ = control_law(now, slack_);
 	    } else
                 first_above_time_ = now + interval_;
             } else if (now >= first_above_time_) {
@@ -168,7 +171,7 @@ dodequeResult LSTFCoDelQueue::dodeque()
 
 Packet* LSTFCoDelQueue::deque()
 {
-    double now = Scheduler::instance().clock();;
+    double now = Scheduler::instance().clock();
     dodequeResult r = dodeque();
 
     if (dropping_) {
@@ -198,7 +201,7 @@ Packet* LSTFCoDelQueue::deque()
                 // schedule the next drop.
 	        ++count_;	//kmn -  only count one drop
 				//     moved from after drop(r.p) above
-                drop_next_ = control_law(drop_next_);
+                drop_next_ = control_law(drop_next_, slack_);
             }
         }
 
@@ -218,21 +221,22 @@ Packet* LSTFCoDelQueue::deque()
 	// decay well enough with this control law. Until a better one
 	// is devised, the below is a hack that appears to improve things.
 
-	if(count_ > 2 && now- drop_next_ < 8*interval_) {
-		count_ = count_ - 2;
-		// kmn decay tests
-		if(count_ > 126) count_ = 0.9844 * (count_ + 2);
-	} else
-		count_ = 1;
-        drop_next_ = control_law(r.p, now);
+        if(count_ > 2 && now- drop_next_ < 8*interval_) {
+	        count_ = count_ - 2;
+	        // kmn decay tests
+	        if(count_ > 126) { 
+                count_ = 0.9844 * (count_ + 2);
+            }
+        } else {
+	        count_ = 1;
+        }
     }
     
-    // update aggregate slack time
-    // give higher weight to stronger delays experience now
-    HDR_CMN(r.p)->slack_ = 
-        (past_influence_ * HDR_CMN(r.p)->slack()) + d_exp_;
+    // update the routers slack time, the goal is to have current packet delay be weighted more than previous packet delays
+    slack_ = (1-forgetfulness_) * slack_ + d_exp_;
+    // packets seen is different from count, count is used in the codel part of the scheduler
+    packets_seen_++;
     
-    // return the dequeued packet
     return (r.p);
 }
 
@@ -251,7 +255,7 @@ int LSTFCoDelQueue::command(int argc, const char*const* argv)
             const char* id = argv[2];
             tchan_ = Tcl_GetChannel(tcl.interp(), (char*)id, &mode);
             if (tchan_ == 0) {
-                tcl.resultf("LSTFCoDel trace: can't attach %s for writing", id);
+                tcl.resultf("CoDel trace: can't attach %s for writing", id);
                 return (TCL_ERROR);
             }
             return (TCL_OK);
@@ -277,12 +281,10 @@ LSTFCoDelQueue::trace(TracedVar* v)
 {
     const char *p;
 
-    if (((p = strstr(v->name(), "past_influence")) == NULL) &&
-        ((p = strstr(v->name(), "lstf_weight")) == NULL) &&
-        ((p = strstr(v->name(), "codel_weight")) == NULL) &&
+    if (((p = strstr(v->name(), "slack")) == NULL) &&
         ((p = strstr(v->name(), "curq")) == NULL) &&
         ((p = strstr(v->name(), "d_exp")) == NULL) ) {
-        fprintf(stderr, "CoDel: unknown trace var %s\n", v->name());
+        fprintf(stderr, "LSTFCoDel: unknown trace var %s\n", v->name());
         return;
     }
     if (tchan_) {

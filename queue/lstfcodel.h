@@ -1,8 +1,6 @@
 /*
  * Codel - The Controlled-Delay Active Queue Management algorithm
  * Copyright (C) 2011-2012 Kathleen Nichols <nichols@pollere.com>
- * LSTFCoDel - Weighted CoDel with Least Slack Time First
- * Copyright (C) 2019 Christen Ford <c.t.ford@vikes.csuohio.edu>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -55,11 +53,11 @@ class LSTFCoDelQueue : public Queue {
     Packet* deque();
 
     // Static state (user supplied parameters)
-    double past_influence_; // factor by which previous delays influence dequeuing operation
-    double lstf_weight_;    // weight of lstf in queue
-    double codel_weight_;   // weight of codel in queue
     double target_;         // target queue size (in time, same units as clock)
     double interval_;       // width of moving time window over which to compute min
+    double forgetfulness_;  // how much past slack times affect current dequeueing
+    double lstf_weight_;    // the weight of lstf in dequeing calculations
+    double codel_weight_;   // the weight of codel in dequeing calculations
 
     // Dynamic state used by algorithm
     double first_above_time_; // when we went (or will go) continuously above
@@ -70,6 +68,8 @@ class LSTFCoDelQueue : public Queue {
     int dropping_;          // = 1 if in dropping state.
     int maxpacket_;         // largest packet we've seen so far (this should be
                             // the link's MTU but that's not available in NS)
+    unsigned double slack_;          // accumulated slack time, may wrap around
+    unsigned long packets_seen_;      // the amount of packets seen by the router, may wrap around
 
     // NS-specific junk
     int command(int argc, const char*const* argv);
@@ -82,7 +82,7 @@ class LSTFCoDelQueue : public Queue {
     TracedDouble d_exp_;    // delay seen by most recently dequeued packet
 
   private:
-    double control_law(Packet*, double);
+    double control_law(double, double);
     dodequeResult dodeque();
 };
 
