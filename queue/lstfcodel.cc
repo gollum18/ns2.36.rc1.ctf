@@ -112,12 +112,20 @@ void LSTFCoDelQueue::enque(Packet* pkt)
 }
 
 // return the time of the next drop relative to 't'
-double LSTFCoDelQueue::control_law(double t, double s)
+double LSTFCoDelQueue::control_law(double t)
 {
-    double codel = codel_weight_ * (t + interval_ / sqrt(count_));
-    // lstf is defined as the lstf_weight * the average slack time, note: I'm not sure if the cast is necessary here, I'm from C#/Java land
-    double lstf = lstf_weight_ * (s / (double)packets_seen_);
-    return codel + 1/lstf;
+    // in order for codel and lstf to function in union with
+    //  each other, we must ensure that codels weight and 
+    //  lstfs weight are equal to 1, otherwise the relative 
+    //  drop time will be off
+    // my motivation here was to account for the average 
+    //  delay experienced by the router over time
+    // more investigation is needed to determine the best
+    //  weighting between codel and lstf
+    double codel = codel_weight_ * 
+        (t + interval_ / sqrt(count_));
+    double lstf = lstf_weight_ * slack_;
+    return codel + lstf;
 }
 
 // Internal routine to dequeue a packet. All the delay and min tracking
@@ -152,7 +160,7 @@ dodequeResult LSTFCoDelQueue::dodeque()
 		// if still above at first_above_time, say it’s ok to drop
 	    // next 3 lines added by kmn (might better adjust count_ first?)
 	    if( (now - drop_next_) < 8*interval_ && count_ > 1) {
-	     first_above_time_ = control_law(now, slack_);
+	     first_above_time_ = control_law(now);
 	    } else
                 first_above_time_ = now + interval_;
             } else if (now >= first_above_time_) {
@@ -201,7 +209,7 @@ Packet* LSTFCoDelQueue::deque()
                 // schedule the next drop.
 	        ++count_;	//kmn -  only count one drop
 				//     moved from after drop(r.p) above
-                drop_next_ = control_law(drop_next_, slack_);
+                drop_next_ = control_law(drop_next_);
             }
         }
 
@@ -232,10 +240,17 @@ Packet* LSTFCoDelQueue::deque()
         }
     }
     
-    // update the routers slack time, the goal is to have current packet delay be weighted more than previous packet delays
-    slack_ = (1-forgetfulness_) * slack_ + d_exp_;
-    // packets seen is different from count, count is used in the codel part of the scheduler
-    packets_seen_++;
+    /* router slack time is a decayed running average of 
+     * the delays experienced so far + the current dequeued
+     * packets experienced delay
+     *
+     * present delay should factor in more than previously 
+     * expreienced delays
+     *
+     * we need to determine if 2 is a proper divisor here
+     * maybe we can use interval_ or count_?
+     */
+    slack_ = ((1-forgetfulness_) * slack_ + d_exp_) / 2;
     
     return (r.p);
 }
