@@ -32,14 +32,19 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef ns_lstf_codel_h
-#define ns_lstf_codel_h
+#ifndef ns_lstfcodel_h
+#define ns_lstfcodel_h
 
 #include "queue.h"
+#include <map>
 #include <stdlib.h>
 #include "agent.h"
 #include "template.h"
 #include "trace.h"
+
+using std::multimap;
+using std::pair;
+using std::prev;
 
 // we need a multi-valued return and C doesn't want to do help
 struct dodequeResult { Packet* p; int ok_to_drop; };
@@ -55,9 +60,7 @@ class LSTFCoDelQueue : public Queue {
     // Static state (user supplied parameters)
     double target_;         // target queue size (in time, same units as clock)
     double interval_;       // width of moving time window over which to compute min
-    double forgetfulness_;  // how much past slack times affect current dequeueing
-    double lstf_weight_;    // the weight of lstf in dequeing calculations
-    double codel_weight_;   // the weight of codel in dequeing calculations
+    double forgetfulness_;
 
     // Dynamic state used by algorithm
     double first_above_time_; // when we went (or will go) continuously above
@@ -68,7 +71,10 @@ class LSTFCoDelQueue : public Queue {
     int dropping_;          // = 1 if in dropping state.
     int maxpacket_;         // largest packet we've seen so far (this should be
                             // the link's MTU but that's not available in NS)
-    double slack_; // accumulated slack time
+                            
+    double avg_slack_;
+    double max_delay_;
+    multimap<double, Packet*> sched_;
 
     // NS-specific junk
     int command(int argc, const char*const* argv);
@@ -81,8 +87,33 @@ class LSTFCoDelQueue : public Queue {
     TracedDouble d_exp_;    // delay seen by most recently dequeued packet
 
   private:
+    void add_packet(double pri, Packet* pkt) {
+        // only add the packet if we can
+        if ((int)sched_.size() < qlim_) {
+            sched_.insert(pair<double, Packet*>(pri, pkt));
+        }
+    }
     double control_law(double);
     dodequeResult dodeque();
+    Packet* get_packet() {
+        if (sched_.size() > 0) {
+            // deque from the end of the priority queue if in dropping state
+            if (dropping_ == 1) {
+                Packet* pkt = (*prev(sched_.end())).second;
+                sched_.erase(prev(sched_.end()));
+                return pkt;
+            }
+            // otherwise deque normally
+            else {
+                Packet* pkt = (*sched_.begin()).second;
+                sched_.erase(sched_.begin());
+                return pkt;
+            }
+        }
+        return 0;
+    }
+    double priority();
+    void update_slack();
 };
 
 #endif
